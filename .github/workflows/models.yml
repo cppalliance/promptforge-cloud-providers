@@ -1,0 +1,60 @@
+name: models
+
+on:
+  schedule:
+    # Weekly, Monday at 12:00 UTC.
+    - cron: '0 12 * * 1'
+  # You may manually run the job by clicking "Run workflow" (workflow
+  # dispatch), or by re-enabling this section to build on every push to
+  # master.
+  # push:
+  #   branches:
+  #     - master
+  workflow_dispatch:
+
+env:
+  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+  COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
+  DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+  DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
+  DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+  ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+  GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+  META_API_KEY: ${{ secrets.META_API_KEY }}
+  MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+  MOONSHOT_API_KEY: ${{ secrets.MOONSHOT_API_KEY }}
+  NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+  OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+  XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+
+jobs:
+  models:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Clone promptforge
+        run: git clone --branch master --depth 1 https://github.com/cppalliance/promptforge
+
+      - name: Build model list
+        working-directory: promptforge
+        run: |
+          set -euo pipefail
+          # RUN SCRIPTS HERE!!
+          # INTERIM PLACEHOLDER
+          timestamp="$(date -u +%Y-%m-%d-%H-%M-%S)"
+          echo "model list" > "${timestamp}-model-list.txt"
+          echo "MODEL_LIST_FILE=${timestamp}-model-list.txt" >> "$GITHUB_ENV"
+
+      - name: Upload to dl.cpp.al
+        working-directory: promptforge
+        env:
+          UPLOAD_SSH_KEY: ${{ secrets.UPLOAD_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$UPLOAD_SSH_KEY" > ~/.ssh/upload_key
+          chmod 600 ~/.ssh/upload_key
+          ssh-keyscan -H dl.cpp.al >> ~/.ssh/known_hosts
+          scp -i ~/.ssh/upload_key "$MODEL_LIST_FILE" \
+            promptforge@dl.cpp.al:/var/www/downloads/promptforge/
