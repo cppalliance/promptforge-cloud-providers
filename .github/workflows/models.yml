@@ -31,30 +31,89 @@ env:
 jobs:
   models:
     runs-on: ubuntu-24.04
+    # The publish step creates the rolling release and overwrites its
+    # asset in place, keeping the download URL stable.
+    permissions:
+      contents: write
     steps:
       - name: Clone promptforge
         run: git clone --branch master --depth 1 https://github.com/cppalliance/promptforge
 
-      - name: Build model list
-        working-directory: promptforge
-        run: |
-          set -euo pipefail
-          # RUN SCRIPTS HERE!!
-          # INTERIM PLACEHOLDER
-          timestamp="$(date -u +%Y-%m-%d-%H-%M-%S)"
-          echo "model list" > "${timestamp}-model-list.txt"
-          echo "MODEL_LIST_FILE=${timestamp}-model-list.txt" >> "$GITHUB_ENV"
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
 
-      - name: Upload to dl.cpp.al
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: promptforge
+
+      - name: Build sheet binary
         working-directory: promptforge
+        run: cargo build --release --locked -p shared-cloud-providers
+
+      # On the runner no profile-dir secrets file exists, so the binary
+      # reads the provider keys from the workflow env block above. An
+      # unset previous-sheet URL or an HTTP 404 means first run; any
+      # other download failure is fatal inside the binary.
+      - name: Build models sheet
         env:
-          UPLOAD_SSH_KEY: ${{ secrets.UPLOAD_SSH_KEY }}
+          MODELS_SHEET_PREVIOUS_URL: https://github.com/cppalliance/promptforge-cloud-providers/releases/download/models/cloud-provider-models.json
         run: |
           set -euo pipefail
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-          printf '%s\n' "$UPLOAD_SSH_KEY" > ~/.ssh/upload_key
-          chmod 600 ~/.ssh/upload_key
-          ssh-keyscan -H dl.cpp.al >> ~/.ssh/known_hosts
-          scp -i ~/.ssh/upload_key "$MODEL_LIST_FILE" \
-            promptforge@dl.cpp.al:/var/www/downloads/promptforge/
+          sheet="$RUNNER_TEMP/cloud-provider-models.json"
+          promptforge/target/release/shared-cloud-providers "$sheet"
+          echo "SHEET=$sheet" >> "$GITHUB_ENV"
+
+      # Gate: no provider key value may appear in the published sheet.
+      # The scanned names are derived at runtime from every *_API_KEY
+      # variable in the environment, so the gate can never drift from
+      # the workflow env block above. Values are never echoed; a hit
+      # names only the variable.
+      - name: Scan sheet for secrets
+        run: |
+          set -euo pipefail
+          while IFS='=' read -r var value; do
+            if [ -n "$value" ] && grep -Fq -- "$value" "$SHEET"; then
+              echo "::error::sheet contains the value of $var; refusing to publish"
+              exit 1
+            fi
+          done < <(env | grep -E '^[A-Z0-9_]+_API_KEY=')
+
+      # Compare only the per-provider model arrays so timestamps and
+      # status flaps (ok/stale) do not force a republication. A 404 on
+      # the published asset means first publish and forces "changed";
+      # any other download failure is fatal, mirroring the binary.
+      - name: Detect changes
+        id: changes
+        run: |
+          set -euo pipefail
+          previous="$RUNNER_TEMP/models-previous.json"
+          url="https://github.com/cppalliance/promptforge-cloud-providers/releases/download/models/cloud-provider-models.json"
+          status="$(curl -sSL -o "$previous" -w '%{http_code}' "$url" || true)"
+          changed=true
+          if [ "$status" = "200" ]; then
+            if cmp -s \
+              <(jq -S '.providers | with_entries(.value |= .models)' "$previous") \
+              <(jq -S '.providers | with_entries(.value |= .models)' "$SHEET")
+            then
+              changed=false
+            fi
+          elif [ "$status" != "404" ]; then
+            echo "::error::previous asset download returned HTTP $status"
+            exit 1
+          fi
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+
+      # Rolling release: overwrite the asset in place so the download
+      # URL never changes.
+      - name: Publish rolling release
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          repo=cppalliance/promptforge-cloud-providers
+          gh release view models --repo "$repo" \
+            || gh release create models --repo "$repo" --title models \
+              --notes "Rolling release carrying the latest cloud-provider-models.json."
+          gh release upload models "$SHEET" --clobber --repo "$repo"
