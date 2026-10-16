@@ -49,7 +49,7 @@ jobs:
 
       - name: Build sheet binary
         working-directory: promptforge
-        run: cargo build --release --locked -p shared-cloud-providers
+        run: cargo build --release --locked -p gateway-cloud-providers
 
       # On the runner no profile-dir secrets file exists, so the binary
       # reads the provider keys from the workflow env block above. An
