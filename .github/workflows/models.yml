@@ -36,8 +36,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Clone promptforge
-        run: git clone --branch master --depth 1 https://github.com/cppalliance/promptforge
+      - name: Clone runvil
+        run: git clone --branch master --depth 1 https://github.com/cppalliance/runvil
 
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -45,10 +45,10 @@ jobs:
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: promptforge
+          workspaces: runvil
 
       - name: Build sheet binary
-        working-directory: promptforge
+        working-directory: runvil
         run: cargo build --release --locked -p gateway-cloud-providers
 
       # On the runner no profile-dir secrets file exists, so the binary
@@ -57,11 +57,11 @@ jobs:
       # other download failure is fatal inside the binary.
       - name: Build models sheet
         env:
-          MODELS_SHEET_PREVIOUS_URL: https://github.com/cppalliance/promptforge-cloud-providers/releases/download/models/cloud-provider-models.json
+          MODELS_SHEET_PREVIOUS_URL: https://github.com/cppalliance/runvil-cloud-providers/releases/download/models/cloud-provider-models.json
         run: |
           set -euo pipefail
           sheet="$RUNNER_TEMP/cloud-provider-models.json"
-          promptforge/target/release/shared-cloud-providers "$sheet"
+          runvil/target/release/shared-cloud-providers "$sheet"
           echo "SHEET=$sheet" >> "$GITHUB_ENV"
 
       # Gate: no provider key value may appear in the published sheet.
@@ -88,7 +88,7 @@ jobs:
         run: |
           set -euo pipefail
           previous="$RUNNER_TEMP/models-previous.json"
-          url="https://github.com/cppalliance/promptforge-cloud-providers/releases/download/models/cloud-provider-models.json"
+          url="https://github.com/cppalliance/runvil-cloud-providers/releases/download/models/cloud-provider-models.json"
           status="$(curl -sSL -o "$previous" -w '%{http_code}' "$url" || true)"
           changed=true
           if [ "$status" = "200" ]; then
@@ -112,7 +112,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          repo=cppalliance/promptforge-cloud-providers
+          repo=cppalliance/runvil-cloud-providers
           gh release view models --repo "$repo" \
             || gh release create models --repo "$repo" --title models \
               --notes "Rolling release carrying the latest cloud-provider-models.json."
